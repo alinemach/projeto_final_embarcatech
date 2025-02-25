@@ -4,11 +4,12 @@
 #include "hardware/gpio.h"
 #include "hardware/timer.h"
 
-// Definição dos pinos do joystick e buzzer
+// Definição dos pinos do joystick, buzzer e botão A
 #define JOYSTICK_X 26      // Pino ADC para eixo X (velocidade)
 #define JOYSTICK_Y 27      // Pino ADC para eixo Y (inclinação)
 #define JOYSTICK_BUTTON 22 // Pino digital para o botão do joystick
 #define BUZZER 21          // Pino digital para o buzzer
+#define BOTAO_A 5         // Pino digital para o botão A
 
 //Trecho para modo BOOTSEL com botão B
 #include "pico/bootrom.h"
@@ -33,6 +34,8 @@ bool treino_em_andamento = false;
 bool treino_pausado = false;
 absolute_time_t tempo_anterior;
 int indice_inclinacao = 0; // Índice da inclinação inicial
+uint32_t tempo_ultimo_clique_botao_A = 0; // Tempo do último clique no botão A
+bool debounce_botao_A = false; // Flag para debouncing do botão A
 
 // Função para emitir beeps com o buzzer
 void emitir_beeps(int quantidade, int duracao, int intervalo) {
@@ -46,22 +49,33 @@ void emitir_beeps(int quantidade, int duracao, int intervalo) {
 
 // Função para iniciar ou retomar o treino
 void iniciar_treino() {
-    printf("Iniciando treino...\n");
-    emitir_beeps(2, 1000, 500); // 2 beeps de 1s com 0.5s de intervalo
-    emitir_beeps(1, 3000, 0);   // 1 beep longo de 3s
+    if (!treino_pausado) {  // Apenas zera os valores se for um treino novo
+        printf("Iniciando novo treino...\n");
+        distancia_percorrida = 0.0;
+        soma_velocidade = 0.0;
+        soma_inclinacao = 0.0;
+        contador_medidas = 0;
+        velocidade_atual = 0.0;
+        indice_inclinacao = 0;
+        inclinacao_atual = inclinacao_niveis[indice_inclinacao];
+    } else {
+        printf("Retomando treino...\n");
+    }
+    
+    emitir_beeps(2, 1000, 500);
     treino_em_andamento = true;
     treino_pausado = false;
-    distancia_percorrida = 0.0;
-    soma_velocidade = 0.0;
-    soma_inclinacao = 0.0;
-    contador_medidas = 0;
-    
-    // Resetando velocidade e inclinação
-    velocidade_atual = 0.0;
-    indice_inclinacao = 0;
-    inclinacao_atual = inclinacao_niveis[indice_inclinacao];
+    tempo_anterior = get_absolute_time();  // Retoma a contagem de tempo corretamente
+}
 
-    tempo_anterior = get_absolute_time();
+void calcula_medias(){
+    // Cálculo das médias
+    float velocidade_media = contador_medidas > 0 ? soma_velocidade / contador_medidas : 0.0;
+    float inclinacao_media = contador_medidas > 0 ? soma_inclinacao / contador_medidas : 0.0;
+
+    // Imprimir as médias
+    printf("Velocidade média: %.1f km/h\n", velocidade_media);
+    printf("Inclinação média: %.1f%%\n", inclinacao_media);
 }
 
 // Função para pausar o treino
@@ -69,6 +83,7 @@ void pausar_treino() {
     printf("Treino pausado!\n");
     emitir_beeps(1, 2000, 0); // 1 beep de 2s
     printf("Distância percorrida: %.1f m\n", distancia_percorrida);
+    calcula_medias();  // Chama a função para calcular e imprimir as médias
     treino_pausado = true;
 }
 
@@ -79,14 +94,9 @@ void finalizar_treino() {
     treino_em_andamento = false;
     treino_pausado = false;
 
-    // Cálculo das médias
-    float velocidade_media = contador_medidas > 0 ? soma_velocidade / contador_medidas : 0.0;
-    float inclinacao_media = contador_medidas > 0 ? soma_inclinacao / contador_medidas : 0.0;
-
     printf("Resumo do treino:\n");
     printf("Distância percorrida: %.1f m\n", distancia_percorrida);
-    printf("Velocidade média: %.1f km/h\n", velocidade_media);
-    printf("Inclinação média: %.1f%%\n", inclinacao_media);
+    calcula_medias();  // Chama a função para calcular e imprimir as médias
 }
 
 // Função para mapear leitura do ADC para um valor desejado
@@ -102,9 +112,9 @@ int main() {
     gpio_init(Botao_B);
     gpio_set_dir(Botao_B, GPIO_IN);
     gpio_pull_up(Botao_B);
-    gpio_set_irq_enabled_with_callback(Botao_B, GPIO_IRQ_EDGE_FALL, true, &gpio_irq_handler);
-
-    // Configura os pinos do joystick e do buzzer
+    gpio_set_irq_enabled_with_callback(Botao_B, GPIO_IRQ_EDGE_FALL, true, &gpio_irq_handler);    
+    
+    // Configura os pinos do joystick, buzzer e botão A
     adc_gpio_init(JOYSTICK_X);
     adc_gpio_init(JOYSTICK_Y);
 
@@ -116,42 +126,45 @@ int main() {
     gpio_set_dir(BUZZER, GPIO_OUT);
     gpio_put(BUZZER, 0);
 
+    gpio_init(BOTAO_A);
+    gpio_set_dir(BOTAO_A, GPIO_IN);
+    gpio_pull_up(BOTAO_A);
+
     velocidade_atual = 0.0;
     tempo_anterior = get_absolute_time();
 
     while (true) {
         if (!treino_em_andamento) {
-            // Espera o botão ser pressionado por 1 segundo para iniciar o treino
+            // Espera o botão do joystick ser pressionado por 1 segundo para iniciar o treino
             if (!gpio_get(JOYSTICK_BUTTON)) {
-                sleep_ms(1000);
+                uint32_t tempo_inicio = to_ms_since_boot(get_absolute_time());
+                while (!gpio_get(JOYSTICK_BUTTON) && to_ms_since_boot(get_absolute_time()) - tempo_inicio < 1000) {
+                    // Aguarda 1 segundo pressionado
+                }
                 if (!gpio_get(JOYSTICK_BUTTON)) {
                     iniciar_treino();
                 }
             }
         } else {
+            // Verifica o botão A para finalizar o treino
+            if (!gpio_get(BOTAO_A)) {
+                uint32_t tempo_atual = to_ms_since_boot(get_absolute_time());
+                if (tempo_atual - tempo_ultimo_clique_botao_A > 200) { // Debouncing de 200ms
+                    finalizar_treino();
+                    tempo_ultimo_clique_botao_A = tempo_atual;
+                }
+            }
+
+            // Verifica o botão do joystick para pausar ou retomar o treino
             if (!gpio_get(JOYSTICK_BUTTON)) {
-                sleep_ms(200);
-                if (!gpio_get(JOYSTICK_BUTTON)) {
-                    uint32_t tempo_inicio = to_ms_since_boot(get_absolute_time());
-
-                    // Espera para verificar se há um segundo clique dentro de 500ms
-                    while (to_ms_since_boot(get_absolute_time()) - tempo_inicio < 500) {
-                        if (!gpio_get(JOYSTICK_BUTTON)) {
-                            finalizar_treino();
-                            break;
-                        }
-                    }
-
-                    if (!treino_em_andamento) {
-                        continue;
-                    }
-
-                    // Se não houve clique duplo, pausa ou retoma o treino
+                uint32_t tempo_atual = to_ms_since_boot(get_absolute_time());
+                if (tempo_atual - tempo_ultimo_clique_botao_A > 200) { // Debouncing de 200ms
                     if (treino_pausado) {
                         iniciar_treino();
                     } else {
                         pausar_treino();
                     }
+                    tempo_ultimo_clique_botao_A = tempo_atual;
                 }
             }
         }
