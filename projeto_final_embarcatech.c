@@ -8,6 +8,10 @@
 #include "lib/ssd1306.h"
 #include "lib/font.h"
 
+// Declaração das funções
+void exibir_medias_display(); // Adicione esta linha
+void exibir_mensagem_finalizado(); // Adicione esta linha
+
 // Definição dos pinos do joystick, buzzer e botão A
 #define JOYSTICK_X 26      // Pino ADC para eixo X (velocidade)
 #define JOYSTICK_Y 27      // Pino ADC para eixo Y (inclinação)
@@ -142,10 +146,46 @@ void pausar_treino() {
     tempo_pausa_inicio = get_absolute_time();
 }
 
+// Função para calcular o tempo de treino decorrido em segundos
+int calcular_tempo_decorrido() {
+    int64_t tempo_decorrido_ms = 0;
+
+    if (treino_em_andamento) {
+        // Se o treino está em andamento, calcula o tempo desde o início do treino
+        tempo_decorrido_ms = absolute_time_diff_us(tempo_inicio_treino, get_absolute_time()) / 1000;
+    } else if (treino_pausado) {
+        // Se o treino está pausado, calcula o tempo até o momento da pausa
+        tempo_decorrido_ms = absolute_time_diff_us(tempo_inicio_treino, tempo_pausa_inicio) / 1000;
+    }
+
+    // Converte o tempo de milissegundos para segundos
+    return (int)(tempo_decorrido_ms / 1000);
+}
+
+// Função para exibir a mensagem de treino finalizado
+void exibir_mensagem_finalizado() {
+    char buffer[32];
+    ssd1306_fill(&ssd, false); // Limpa o display (fundo escuro)
+
+    // Centraliza as palavras "TREINO", "EMBARCATECH" e "FINALIZADO" em três linhas
+    int mensagem_x = (128 - (11 * 8)) / 2; // Centraliza o texto (6 pixels por caractere)
+
+    // Primeira linha: "TREINO"
+    ssd1306_draw_string(&ssd, "TREINO", mensagem_x, 10); // Posiciona "TREINO" na linha 10
+
+    // Segunda linha: "EMBARCATECH"
+    ssd1306_draw_string(&ssd, "EMBARCATECH", mensagem_x, 26); // Posiciona "EMBARCATECH" na linha 26
+
+    // Terceira linha: "FINALIZADO"
+    ssd1306_draw_string(&ssd, "FINALIZADO", mensagem_x, 42); // Posiciona "FINALIZADO" na linha 42
+
+    ssd1306_send_data(&ssd);
+}
+
 // Função para finalizar o treino
 void finalizar_treino() {
     printf("Treino finalizado!\n");
-    set_brightness(LED_AZUL, 100); //alerta que a esteira está disponível para um novo usuário
+    set_brightness(LED_AZUL, 100); // Alerta que a esteira está disponível para um novo usuário
     emitir_beeps(4, 500, 300); // 4 beeps curtos
     treino_em_andamento = false;
     treino_pausado = false;
@@ -153,7 +193,17 @@ void finalizar_treino() {
     printf("Resumo do treino:\n");
     printf("Distância percorrida: %.1f m\n", distancia_percorrida);
     calcula_medias();  // Chama a função para calcular e imprimir as médias
-    sleep_ms(500); //espera 500ms para desligar o led, aqui simulo quando o usuario finaliza o treino e o led da esteira fica ligado para alertar a outro usuario que essa esteira está disponivel para ser usada
+
+    // Exibe as médias no display
+    exibir_medias_display();
+
+    // Aguarda 3 segundos
+    sleep_ms(3000);
+
+    // Exibe a mensagem de treino finalizado
+    exibir_mensagem_finalizado();
+
+    sleep_ms(500); // Espera 500ms antes de desligar o LED
     set_brightness(LED_AZUL, 0);
 }
 
@@ -165,19 +215,27 @@ float mapear_adc(uint16_t valor_adc, float min_saida, float max_saida) {
 // Função para atualizar o display OLED com as informações do treino
 void atualizar_display_treino() {
     char buffer[32];
-    ssd1306_fill(&ssd, false);
+    ssd1306_fill(&ssd, false); // Fundo escuro (todos os pixels desligados)
+
+    // Centraliza a palavra "EMBARCATECH" na primeira linha
+    int embarcatech_length = 11; // Número de caracteres em "EMBARCATECH"
+    int embarcatech_x = (128 - (embarcatech_length * 8)) / 2; // Centraliza o texto (6 pixels por caractere)
+    ssd1306_draw_string(&ssd, "EMBARCATECH", embarcatech_x, 2); // Centralizado na primeira linha (fonte clara)
+
+    // Linha horizontal abaixo do cabeçalho
+    ssd1306_line(&ssd, 0, 16, 128, 16, true); // Linha horizontal (fonte clara)
 
     // Exibe a velocidade atual
-    snprintf(buffer, sizeof(buffer), "Km/h: %.1f", velocidade_atual);
-    ssd1306_draw_string(&ssd, buffer, 0, 0);
+    snprintf(buffer, sizeof(buffer), "Vel.: %.1f Km/h", velocidade_atual);
+    ssd1306_draw_string(&ssd, buffer, 0, 20); // Fonte clara
 
     // Exibe a inclinação atual
-    snprintf(buffer, sizeof(buffer), "Incl.: %.1f%%", inclinacao_atual);
-    ssd1306_draw_string(&ssd, buffer, 0, 16);
+    snprintf(buffer, sizeof(buffer), "Inclin.: %.1f%%", inclinacao_atual);
+    ssd1306_draw_string(&ssd, buffer, 0, 36); // Fonte clara
 
     // Exibe a distância percorrida
-    snprintf(buffer, sizeof(buffer), "Dist.: %.1f m", distancia_percorrida);
-    ssd1306_draw_string(&ssd, buffer, 0, 32);
+    snprintf(buffer, sizeof(buffer), "Distan.: %.1f m", distancia_percorrida);
+    ssd1306_draw_string(&ssd, buffer, 0, 52); // Fonte clara
 
     ssd1306_send_data(&ssd);
 }
@@ -191,17 +249,39 @@ void exibir_medias_display() {
     float velocidade_media = contador_medidas > 0 ? soma_velocidade / contador_medidas : 0.0;
     float inclinacao_media = contador_medidas > 0 ? soma_inclinacao / contador_medidas : 0.0;
 
-    // Exibe a velocidade média
-    snprintf(buffer, sizeof(buffer), "Vel Med: %.1f km/h", velocidade_media);
-    ssd1306_draw_string(&ssd, buffer, 0, 0);
+    // Desenha a tabela
+    ssd1306_rect(&ssd, 0, 0, 128, 64, true, false); // Borda da tabela
+    ssd1306_line(&ssd, 55, 16, 55, 64, true); // Linha vertical (começa após a primeira linha)
+    ssd1306_line(&ssd, 0, 16, 128, 16, true); // Linha horizontal abaixo do cabeçalho
 
-    // Exibe a inclinação média
-    snprintf(buffer, sizeof(buffer), "Incl Med: %.1f%%", inclinacao_media);
-    ssd1306_draw_string(&ssd, buffer, 0, 16);
+    // Centraliza a palavra "EMBARCATECH" na primeira linha
+    int embarcatech_length = 11; // Número de caracteres em "EMBARCATECH"
+    int embarcatech_x = (128 - (embarcatech_length * 8)) / 2; // Centraliza o texto (6 pixels por caractere)
+    ssd1306_draw_string(&ssd, "EMBARCATECH", embarcatech_x, 2); // Centralizado na primeira linha
 
-    // Exibe a distância percorrida
-    snprintf(buffer, sizeof(buffer), "Dist: %.1f m", distancia_percorrida);
-    ssd1306_draw_string(&ssd, buffer, 0, 32);
+    // Coluna 1: Tempo e Distância
+    ssd1306_draw_string(&ssd, "Tempo", 2, 20); // Alinhado à esquerda, sem margem
+    snprintf(buffer, sizeof(buffer), "%d s", calcular_tempo_decorrido()); // Exibe o tempo decorrido
+    ssd1306_draw_string(&ssd, buffer, 2, 30); // Alinhado à esquerda, sem margem
+
+    // Linha horizontal entre "X" e "Dist."
+    ssd1306_line(&ssd, 0, 38, 128, 38, true); // Linha horizontal cortando as duas colunas
+
+    ssd1306_draw_string(&ssd, "Dist.", 2, 40); // Alinhado à esquerda, sem margem
+    snprintf(buffer, sizeof(buffer), "%.1f m", distancia_percorrida);
+    ssd1306_draw_string(&ssd, buffer, 2, 50); // Alinhado à esquerda, sem margem
+
+    // Coluna 2: Incl. Média e Vel. Média
+    ssd1306_draw_string(&ssd, "Incl. M.", 57, 20); // Alinhado à esquerda, sem margem
+    snprintf(buffer, sizeof(buffer), "%.1f%%", inclinacao_media);
+    ssd1306_draw_string(&ssd, buffer, 57, 30); // Alinhado à esquerda, sem margem
+
+    // Linha horizontal entre o valor da inclinação média e "Vel. M."
+    ssd1306_line(&ssd, 0, 38, 128, 38, true); // Linha horizontal cortando as duas colunas
+
+    ssd1306_draw_string(&ssd, "Vel. M.", 57, 40); // Alinhado à esquerda, sem margem
+    snprintf(buffer, sizeof(buffer), "%.1f km/h", velocidade_media);
+    ssd1306_draw_string(&ssd, buffer, 57, 50); // Alinhado à esquerda, sem margem
 
     ssd1306_send_data(&ssd);
 }
@@ -268,7 +348,6 @@ int main() {
                 uint32_t tempo_atual = to_ms_since_boot(get_absolute_time());
                 if (tempo_atual - tempo_ultimo_clique_botao_A > 200) { // Debouncing de 200ms
                     finalizar_treino();
-                    exibir_medias_display(); // Exibe as médias no display
                     tempo_ultimo_clique_botao_A = tempo_atual;
                 }
             }
@@ -281,7 +360,6 @@ int main() {
                         iniciar_treino();
                     } else {
                         pausar_treino();
-                        exibir_medias_display(); // Exibe as médias no display
                     }
                     tempo_ultimo_clique_botao_A = tempo_atual;
                 }
