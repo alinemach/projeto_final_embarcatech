@@ -48,7 +48,8 @@ pico_enable_stdio_usb(projeto_final_embarcatech 1)
 target_link_libraries(projeto_final_embarcatech
         pico_stdlib
         hardware_i2c 
-        hardware_adc)
+        hardware_adc
+        hardware_pwm)
 
 # Add the standard include files to the build
 target_include_directories(projeto_final_embarcatech PRIVATE

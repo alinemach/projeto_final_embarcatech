@@ -3,6 +3,7 @@
 #include "hardware/adc.h"
 #include "hardware/gpio.h"
 #include "hardware/timer.h"
+#include "hardware/pwm.h"
 
 // Definição dos pinos do joystick, buzzer e botão A
 #define JOYSTICK_X 26      // Pino ADC para eixo X (velocidade)
@@ -10,6 +11,7 @@
 #define JOYSTICK_BUTTON 22 // Pino digital para o botão do joystick
 #define BUZZER 21          // Pino digital para o buzzer
 #define BOTAO_A 5         // Pino digital para o botão A
+#define LED_AZUL 12
 
 //Trecho para modo BOOTSEL com botão B
 #include "pico/bootrom.h"
@@ -33,9 +35,28 @@ int contador_medidas = 0;
 bool treino_em_andamento = false;
 bool treino_pausado = false;
 absolute_time_t tempo_anterior;
+absolute_time_t tempo_inicio_treino;
+absolute_time_t tempo_pausa_inicio;
+int tempo_treino_minutos = 0;
 int indice_inclinacao = 0; // Índice da inclinação inicial
 uint32_t tempo_ultimo_clique_botao_A = 0; // Tempo do último clique no botão A
 bool debounce_botao_A = false; // Flag para debouncing do botão A
+
+// Função para configurar PWM no LED azul
+void configure_pwm(uint gpio) {
+    gpio_set_function(gpio, GPIO_FUNC_PWM);
+    uint slice_num = pwm_gpio_to_slice_num(gpio);
+    pwm_config config = pwm_get_default_config();
+    pwm_config_set_clkdiv(&config, 4.0f);
+    pwm_init(slice_num, &config, true);
+}
+
+// Função para ajustar o brilho do LED azul
+void set_brightness(uint gpio, uint8_t percent) {
+    if (percent > 100) percent = 100;
+    uint16_t value = (uint16_t)((percent / 100.0) * 65535);
+    pwm_set_gpio_level(gpio, value);
+}
 
 // Função para emitir beeps com o buzzer
 void emitir_beeps(int quantidade, int duracao, int intervalo) {
@@ -50,6 +71,16 @@ void emitir_beeps(int quantidade, int duracao, int intervalo) {
 // Função para iniciar ou retomar o treino
 void iniciar_treino() {
     if (!treino_pausado) {  // Apenas zera os valores se for um treino novo
+        printf("Quantos minutos de treino deseja? ");
+        char input = getchar(); // Lê um caractere do terminal
+        tempo_treino_minutos = input - '0'; // Converte de char para int (suporta de 0 a 9 minutos)
+
+        if (tempo_treino_minutos <= 0 || tempo_treino_minutos > 9) {
+            tempo_treino_minutos = 1;  //caso o usuario coloque uma entrada inválida, o sisteminha escolhe 1' de treino
+        }
+
+        printf("Treino de %d minutos iniciado!\n", tempo_treino_minutos);
+
         printf("Iniciando novo treino...\n");
         distancia_percorrida = 0.0;
         soma_velocidade = 0.0;
@@ -58,14 +89,33 @@ void iniciar_treino() {
         velocidade_atual = 0.0;
         indice_inclinacao = 0;
         inclinacao_atual = inclinacao_niveis[indice_inclinacao];
+        tempo_inicio_treino = get_absolute_time();
     } else {
         printf("Retomando treino...\n");
+        int64_t tempo_pausa_ms = absolute_time_diff_us(tempo_pausa_inicio, get_absolute_time()) / 1000;
+        tempo_inicio_treino = delayed_by_ms(tempo_inicio_treino, tempo_pausa_ms);
     }
     
     emitir_beeps(2, 1000, 500);
     treino_em_andamento = true;
     treino_pausado = false;
     tempo_anterior = get_absolute_time();  // Retoma a contagem de tempo corretamente
+}
+
+// Função para verificar e atualizar a intensidade do LED azul
+void atualizar_led_azul() {
+    if (treino_em_andamento) {
+        int64_t tempo_decorrido_ms = absolute_time_diff_us(tempo_inicio_treino, get_absolute_time()) / 1000;
+        int64_t tempo_total_ms = tempo_treino_minutos * 60 * 1000;
+        
+        if (tempo_decorrido_ms >= tempo_total_ms) {
+            treino_em_andamento = false;
+            printf("Tempo de treino encerrado!\n");
+        }
+
+        int brilho = (tempo_decorrido_ms * 100) / tempo_total_ms;
+        set_brightness(LED_AZUL, brilho);
+    }
 }
 
 void calcula_medias(){
@@ -85,11 +135,13 @@ void pausar_treino() {
     printf("Distância percorrida: %.1f m\n", distancia_percorrida);
     calcula_medias();  // Chama a função para calcular e imprimir as médias
     treino_pausado = true;
+    tempo_pausa_inicio = get_absolute_time();
 }
 
 // Função para finalizar o treino
 void finalizar_treino() {
     printf("Treino finalizado!\n");
+    set_brightness(LED_AZUL, 100); //alerta que a esteira está disponível para um novo usuário
     emitir_beeps(4, 500, 300); // 4 beeps curtos
     treino_em_andamento = false;
     treino_pausado = false;
@@ -97,6 +149,8 @@ void finalizar_treino() {
     printf("Resumo do treino:\n");
     printf("Distância percorrida: %.1f m\n", distancia_percorrida);
     calcula_medias();  // Chama a função para calcular e imprimir as médias
+    sleep_ms(500); //espera 500ms para desligar o led, aqui simulo quando o usuario finaliza o treino e o led da esteira fica ligado para alertar a outro usuario que essa esteira está disponivel para ser usada
+    set_brightness(LED_AZUL, 0);
 }
 
 // Função para mapear leitura do ADC para um valor desejado
@@ -107,6 +161,8 @@ float mapear_adc(uint16_t valor_adc, float min_saida, float max_saida) {
 int main() {
     stdio_init_all();
     adc_init();
+
+    configure_pwm(LED_AZUL);
 
     // Configuração do modo BOOTSEL com botão B
     gpio_init(Botao_B);
@@ -146,6 +202,7 @@ int main() {
                 }
             }
         } else {
+            atualizar_led_azul();
             // Verifica o botão A para finalizar o treino
             if (!gpio_get(BOTAO_A)) {
                 uint32_t tempo_atual = to_ms_since_boot(get_absolute_time());
