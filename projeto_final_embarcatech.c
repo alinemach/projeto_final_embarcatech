@@ -4,6 +4,9 @@
 #include "hardware/gpio.h"
 #include "hardware/timer.h"
 #include "hardware/pwm.h"
+#include "hardware/i2c.h"
+#include "lib/ssd1306.h"
+#include "lib/font.h"
 
 // Definição dos pinos do joystick, buzzer e botão A
 #define JOYSTICK_X 26      // Pino ADC para eixo X (velocidade)
@@ -12,6 +15,12 @@
 #define BUZZER 21          // Pino digital para o buzzer
 #define BOTAO_A 5         // Pino digital para o botão A
 #define LED_AZUL 12
+
+// Definição dos pinos I2C para o display OLED
+#define I2C_PORT i2c1
+#define I2C_SDA 14
+#define I2C_SCL 15
+#define OLED_ADDRESS 0x3C
 
 //Trecho para modo BOOTSEL com botão B
 #include "pico/bootrom.h"
@@ -41,6 +50,9 @@ int tempo_treino_minutos = 1; // Tempo de treino fixo em 1 minuto
 int indice_inclinacao = 0; // Índice da inclinação inicial
 uint32_t tempo_ultimo_clique_botao_A = 0; // Tempo do último clique no botão A
 bool debounce_botao_A = false; // Flag para debouncing do botão A
+
+// Variável para o display OLED
+ssd1306_t ssd;
 
 // Função para configurar PWM no LED azul
 void configure_pwm(uint gpio) {
@@ -150,9 +162,65 @@ float mapear_adc(uint16_t valor_adc, float min_saida, float max_saida) {
     return min_saida + (max_saida - min_saida) * (valor_adc / 4095.0);
 }
 
+// Função para atualizar o display OLED com as informações do treino
+void atualizar_display_treino() {
+    char buffer[32];
+    ssd1306_fill(&ssd, false);
+
+    // Exibe a velocidade atual
+    snprintf(buffer, sizeof(buffer), "Km/h: %.1f", velocidade_atual);
+    ssd1306_draw_string(&ssd, buffer, 0, 0);
+
+    // Exibe a inclinação atual
+    snprintf(buffer, sizeof(buffer), "Incl.: %.1f%%", inclinacao_atual);
+    ssd1306_draw_string(&ssd, buffer, 0, 16);
+
+    // Exibe a distância percorrida
+    snprintf(buffer, sizeof(buffer), "Dist.: %.1f m", distancia_percorrida);
+    ssd1306_draw_string(&ssd, buffer, 0, 32);
+
+    ssd1306_send_data(&ssd);
+}
+
+// Função para exibir as médias no display quando o treino é pausado ou finalizado
+void exibir_medias_display() {
+    char buffer[32];
+    ssd1306_fill(&ssd, false);
+
+    // Cálculo das médias
+    float velocidade_media = contador_medidas > 0 ? soma_velocidade / contador_medidas : 0.0;
+    float inclinacao_media = contador_medidas > 0 ? soma_inclinacao / contador_medidas : 0.0;
+
+    // Exibe a velocidade média
+    snprintf(buffer, sizeof(buffer), "Vel Med: %.1f km/h", velocidade_media);
+    ssd1306_draw_string(&ssd, buffer, 0, 0);
+
+    // Exibe a inclinação média
+    snprintf(buffer, sizeof(buffer), "Incl Med: %.1f%%", inclinacao_media);
+    ssd1306_draw_string(&ssd, buffer, 0, 16);
+
+    // Exibe a distância percorrida
+    snprintf(buffer, sizeof(buffer), "Dist: %.1f m", distancia_percorrida);
+    ssd1306_draw_string(&ssd, buffer, 0, 32);
+
+    ssd1306_send_data(&ssd);
+}
+
 int main() {
     stdio_init_all();
     adc_init();
+
+    // Inicialização do display OLED
+    i2c_init(I2C_PORT, 400 * 1000);
+    gpio_set_function(I2C_SDA, GPIO_FUNC_I2C);
+    gpio_set_function(I2C_SCL, GPIO_FUNC_I2C);
+    gpio_pull_up(I2C_SDA);
+    gpio_pull_up(I2C_SCL);
+
+    ssd1306_init(&ssd, 128, 64, false, OLED_ADDRESS, I2C_PORT);
+    ssd1306_config(&ssd);
+    ssd1306_fill(&ssd, false);
+    ssd1306_send_data(&ssd);
 
     configure_pwm(LED_AZUL);
 
@@ -200,6 +268,7 @@ int main() {
                 uint32_t tempo_atual = to_ms_since_boot(get_absolute_time());
                 if (tempo_atual - tempo_ultimo_clique_botao_A > 200) { // Debouncing de 200ms
                     finalizar_treino();
+                    exibir_medias_display(); // Exibe as médias no display
                     tempo_ultimo_clique_botao_A = tempo_atual;
                 }
             }
@@ -212,6 +281,7 @@ int main() {
                         iniciar_treino();
                     } else {
                         pausar_treino();
+                        exibir_medias_display(); // Exibe as médias no display
                     }
                     tempo_ultimo_clique_botao_A = tempo_atual;
                 }
@@ -254,6 +324,9 @@ int main() {
 
             printf("Velocidade: %.1f km/h | Inclinação: %.1f%% | Distância: %.1f m\n",
                    velocidade_atual, inclinacao_atual, distancia_percorrida);
+
+            // Atualiza o display com as informações do treino
+            atualizar_display_treino();
 
             sleep_ms(500);
         }
