@@ -37,7 +37,7 @@ bool treino_pausado = false;
 absolute_time_t tempo_anterior;
 absolute_time_t tempo_inicio_treino;
 absolute_time_t tempo_pausa_inicio;
-int tempo_treino_minutos = 0;
+int tempo_treino_minutos = 1; // Tempo de treino fixo em 1 minuto
 int indice_inclinacao = 0; // Índice da inclinação inicial
 uint32_t tempo_ultimo_clique_botao_A = 0; // Tempo do último clique no botão A
 bool debounce_botao_A = false; // Flag para debouncing do botão A
@@ -71,14 +71,6 @@ void emitir_beeps(int quantidade, int duracao, int intervalo) {
 // Função para iniciar ou retomar o treino
 void iniciar_treino() {
     if (!treino_pausado) {  // Apenas zera os valores se for um treino novo
-        printf("Quantos minutos de treino deseja? ");
-        char input = getchar(); // Lê um caractere do terminal
-        tempo_treino_minutos = input - '0'; // Converte de char para int (suporta de 0 a 9 minutos)
-
-        if (tempo_treino_minutos <= 0 || tempo_treino_minutos > 9) {
-            tempo_treino_minutos = 1;  //caso o usuario coloque uma entrada inválida, o sisteminha escolhe 1' de treino
-        }
-
         printf("Treino de %d minutos iniciado!\n", tempo_treino_minutos);
 
         printf("Iniciando novo treino...\n");
