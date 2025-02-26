@@ -148,3 +148,8 @@ O arquivo binário gerado pode ser carregado no Raspberry Pi Pico para execuçã
 🏁 Considerações Finais
 
 Este projeto demonstra a integração de vários periféricos em um sistema embarcado, incluindo controle de entrada/saída, comunicação I2C, e exibição gráfica. A estrutura modular do código facilita a expansão e manutenção do sistema.
+
+📹 Vídeo do Projeto
+
+Para visualizar uma demonstração do projeto em funcionamento, confira o vídeo:
+[https://youtu.be/lhOVhGRdH_g](https://youtu.be/lhOVhGRdH_g)
