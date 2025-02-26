@@ -19,20 +19,14 @@ void exibir_mensagem_finalizado(); // Adicione esta linha
 #define BUZZER 21          // Pino digital para o buzzer
 #define BOTAO_A 5         // Pino digital para o botão A
 #define LED_AZUL 12
+#define LED_VERMELHO 13    // Pino digital para o LED vermelho
+#define BOTAO_B 6          // Pino digital para o botão B
 
 // Definição dos pinos I2C para o display OLED
 #define I2C_PORT i2c1
 #define I2C_SDA 14
 #define I2C_SCL 15
 #define OLED_ADDRESS 0x3C
-
-//Trecho para modo BOOTSEL com botão B
-#include "pico/bootrom.h"
-#define Botao_B 6
-void gpio_irq_handler(uint gpio, uint32_t events)
-{
-  reset_usb_boot(0, 0);
-}
 
 // Definição dos níveis de inclinação e velocidade
 const float inclinacao_niveis[] = {0.0, 3.0, 6.0, 9.0, 12.0};
@@ -57,6 +51,9 @@ bool debounce_botao_A = false; // Flag para debouncing do botão A
 
 // Variável para o display OLED
 ssd1306_t ssd;
+
+// Variável para controle do estado de emergência
+bool emergencia_ativa = false;
 
 // Função para configurar PWM no LED azul
 void configure_pwm(uint gpio) {
@@ -84,6 +81,29 @@ void emitir_beeps(int quantidade, int duracao, int intervalo) {
     }
 }
 
+// Função para ativar/desativar o alerta de emergência
+void pedir_ajuda_emergencia() {
+    emergencia_ativa = !emergencia_ativa; // Alterna o estado de emergência
+
+    if (emergencia_ativa) {
+        printf("Alerta de emergência ativado!\n");
+        while (emergencia_ativa) {
+            gpio_put(LED_VERMELHO, 1); // Liga o LED vermelho
+            gpio_put(BUZZER, 1);       // Liga o buzzer
+            sleep_ms(500);             // Espera 500ms
+            gpio_put(LED_VERMELHO, 0); // Desliga o LED vermelho
+            gpio_put(BUZZER, 0);       // Desliga o buzzer
+            sleep_ms(500);             // Espera 500ms
+
+            // Verifica se o botão B foi pressionado novamente para desativar o alerta
+            if (!gpio_get(BOTAO_B)) {
+                emergencia_ativa = false;
+                printf("Alerta de emergência desativado!\n");
+            }
+        }
+    }
+}
+
 // Função para iniciar ou retomar o treino
 void iniciar_treino() {
     if (!treino_pausado) {  // Apenas zera os valores se for um treino novo
@@ -103,7 +123,7 @@ void iniciar_treino() {
         int64_t tempo_pausa_ms = absolute_time_diff_us(tempo_pausa_inicio, get_absolute_time()) / 1000;
         tempo_inicio_treino = delayed_by_ms(tempo_inicio_treino, tempo_pausa_ms);
     }
-    
+
     emitir_beeps(2, 1000, 500);
     treino_em_andamento = true;
     treino_pausado = false;
@@ -115,7 +135,7 @@ void atualizar_led_azul() {
     if (treino_em_andamento) {
         int64_t tempo_decorrido_ms = absolute_time_diff_us(tempo_inicio_treino, get_absolute_time()) / 1000;
         int64_t tempo_total_ms = tempo_treino_minutos * 60 * 1000;
-        
+
         if (tempo_decorrido_ms >= tempo_total_ms) {
             treino_em_andamento = false;
             printf("Tempo de treino encerrado!\n");
@@ -304,12 +324,16 @@ int main() {
 
     configure_pwm(LED_AZUL);
 
-    // Configuração do modo BOOTSEL com botão B
-    gpio_init(Botao_B);
-    gpio_set_dir(Botao_B, GPIO_IN);
-    gpio_pull_up(Botao_B);
-    gpio_set_irq_enabled_with_callback(Botao_B, GPIO_IRQ_EDGE_FALL, true, &gpio_irq_handler);    
-    
+    // Configuração do botão B para emergência
+    gpio_init(BOTAO_B);
+    gpio_set_dir(BOTAO_B, GPIO_IN);
+    gpio_pull_up(BOTAO_B);
+
+    // Configuração do LED vermelho
+    gpio_init(LED_VERMELHO);
+    gpio_set_dir(LED_VERMELHO, GPIO_OUT);
+    gpio_put(LED_VERMELHO, 0);
+
     // Configura os pinos do joystick, buzzer e botão A
     adc_gpio_init(JOYSTICK_X);
     adc_gpio_init(JOYSTICK_Y);
@@ -361,6 +385,15 @@ int main() {
                     } else {
                         pausar_treino();
                     }
+                    tempo_ultimo_clique_botao_A = tempo_atual;
+                }
+            }
+
+            // Verifica o botão B para ativar/desativar o alerta de emergência
+            if (!gpio_get(BOTAO_B)) {
+                uint32_t tempo_atual = to_ms_since_boot(get_absolute_time());
+                if (tempo_atual - tempo_ultimo_clique_botao_A > 200) { // Debouncing de 200ms
+                    pedir_ajuda_emergencia();
                     tempo_ultimo_clique_botao_A = tempo_atual;
                 }
             }
